@@ -212,6 +212,7 @@ Resources:
                 auth=(os.getenv('USERNAME'), os.getenv('PASSWORD'))
 
                 print("DATA: {}".format(data))
+                # print("AUTH: {}".format(auth))
                 print("URL for run request {}".format(api_endpoint))
 
                 headers = {"X-Requested-With": "Qualys CloudFormation (python)"}
