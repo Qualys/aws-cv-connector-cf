@@ -2,9 +2,9 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: Template to automatically setup Qualys AWS Connector for Asset Scanning
 Metadata:
   Author: "Sean Nicholson"
-  Version: "1.0"
-  Updated: "01/02/2019"
-  Version Comments: "Initial release, based off https://github.com/snicholson-qualys/aws-ec2-cloudformation-connector"
+  Version: "1.1"
+  Updated: "03/05/2019"
+  Version Comments: "Added Connector naming based off AWS Account Alias. Initial release, based off https://github.com/snicholson-qualys/aws-ec2-cloudformation-connector"
 Parameters:
   UserName:
     Default: {supply_Qualys_user_name}
@@ -212,7 +212,6 @@ Resources:
                 auth=(os.getenv('USERNAME'), os.getenv('PASSWORD'))
 
                 print("DATA: {}".format(data))
-                print("AUTH: {}".format(auth))
                 print("URL for run request {}".format(api_endpoint))
 
                 headers = {"X-Requested-With": "Qualys CloudFormation (python)"}
