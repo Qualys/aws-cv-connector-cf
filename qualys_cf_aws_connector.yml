@@ -2,9 +2,9 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: Template to automatically setup Qualys AWS Connector for Asset Scanning
 Metadata:
   Author: "Sean Nicholson"
-  Version: "1.0"
-  Updated: "01/02/2019"
-  Version Comments: "Initial release, based off https://github.com/snicholson-qualys/aws-ec2-cloudformation-connector"
+  Version: "1.1"
+  Updated: "03/05/2019"
+  Version Comments: "Added Connector naming based off AWS Account Alias. Initial release, based off https://github.com/snicholson-qualys/aws-ec2-cloudformation-connector"
 Parameters:
   UserName:
     Default: {supply_Qualys_user_name}
@@ -27,6 +27,7 @@ Parameters:
     Default: CF-QualysAWSConnectorRole
     Description: Name of the Role to Create
     Type: String
+
 Resources:
   ConnectorFunction:
     Type: AWS::Lambda::Function
@@ -47,53 +48,48 @@ Resources:
           import cfnresponse
           from random import randint
           import time
-
+          import boto3
           def lambda_handler(event,context):
               EXTERNALID = os.getenv('EXTERNALID')
               ROLENAME = os.getenv('ROLENAME')
-
               dataConnectorId = 12345678
               qualysAccountId = 805950163170
-
               try:
                 api_endpoint="{}/cloudview-api/rest/1.5/aws/connectors".format(os.getenv('BASEURL'))
                 ACCOUNT_ID = context.invoked_function_arn.split(":")[4]
+                client = boto3.client('iam')
+                paginator = client.get_paginator('list_account_aliases')
+                for response in paginator.paginate():
+                  print(response['AccountAliases'])
+                  print(type(response['AccountAliases'][0]))
+                  accountName = str(response['AccountAliases'][0])
                 EXTERNALID = randint(1000000000000000000,999999999999999999999999999999999) if EXTERNALID == "Empty" else EXTERNALID
                 print("API_ENDPOINT: {}".format(api_endpoint))
                 print("ACCOUNT_ID: {}".format(ACCOUNT_ID))
                 print("EXTERNALID: {}".format(EXTERNALID))
-
                 data= {
                     "arn":"arn:aws:iam::{}:role/{}".format(ACCOUNT_ID, ROLENAME),
-                    "name":"CF_AWS_{}2".format(ACCOUNT_ID),
-                    "description": "Connector for AWS Account {} - Implemented with CloudFormation".format(ACCOUNT_ID),
+                    "name":"{}".format(accountName),
+                    "description": "Account Name: {0} AWS Account ID {1} - Implemented with CloudFormation".format(accountName, ACCOUNT_ID),
                     "externalId":"{}".format(EXTERNALID)
                   }
                 auth=(os.getenv('USERNAME'), os.getenv('PASSWORD'))
-
                 print("DATA: {}".format(data))
-                print("AUTH: {}".format(auth))
-
+                # print("AUTH: {}".format(auth))
                 headers = {"X-Requested-With": "Qualys CloudFormation (python)"}
                 headers['Accept'] = 'application/json'
                 headers['Content-Type'] = 'application/json'
-
                 r = requests.post(api_endpoint, json=data, auth=auth, headers=headers)
                 print("RESPONSE: {}".format(r))
                 data = r.json()
                 print("DATA: {}".format(data))
-
-
                 responseData = {}
                 if r.status_code == 200:
                   responseData['responseCode'] = r.status_code
-
                   if 'error' in data:
                     if data['error']:
                       responseData['responseErrorDetails'] = data['error']
                       cfnresponse.send(event, context, cfnresponse.FAILED, responseData)
-
-
                   if 'connectorId' in data:
                     DataConnectorId = data['connectorId']
                     if 'qualysAccountId' in data:
@@ -102,19 +98,14 @@ Resources:
                       qualysAccountId = 805950163170
                 print("ResponseData collection: {}".format(responseData))
                 callconnectorId = data['connectorId']
-
-
-
               except Exception as e:
                 traceback.print_exc()
                 responseData['responseErrorDetails'] = e
                 cfnresponse.send(event, context, cfnresponse.FAILED, responseData)
-
               responseData['DataConnectorId'] = DataConnectorId
               responseData['AccountId'] = qualysAccountId
               responseData['ExternalId'] = EXTERNALID
               cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
-
       Description: Lambda Function to Register Qualys AWS Connector and Create associated Role
       Handler: index.lambda_handler
       Role: !GetAtt 'LambdaExecutionRole.Arn'
@@ -147,6 +138,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - iam:CreateRole
+                  - iam:ListAccountAliases
                 Resource: '*'
   QualysConnectorRole:
     Type: AWS::IAM::Role
@@ -184,14 +176,11 @@ Resources:
           import os
           from botocore.vendored import requests
           import cfnresponse
-
-
           def lambda_handler(event,context):
               EXTERNALID = os.getenv('EXTERNALID')
               ROLENAME = os.getenv('ROLENAME')
               CONNECTORID = os.getenv('CONNECTORID')
               responseData = {}
-
               try:
                 api_endpoint="{}/cloudview-api/rest/1.5/aws/connectors/run".format(os.getenv('BASEURL'))
                 data = {
@@ -200,30 +189,21 @@ Resources:
                   ]
                 }
                 auth=(os.getenv('USERNAME'), os.getenv('PASSWORD'))
-
                 print("DATA: {}".format(data))
-                print("AUTH: {}".format(auth))
+                # print("AUTH: {}".format(auth))
                 print("URL for run request {}".format(api_endpoint))
-
                 headers = {"X-Requested-With": "Qualys CloudFormation (python)"}
                 headers['Accept'] = 'application/json'
                 headers['Content-Type'] = 'application/json'
-
                 print("DATA: {}".format(data))
-
-
                 r = requests.post(api_endpoint, json=data, auth=auth, headers=headers)
                 print("Run Connector Response: {}".format(r.status_code))
-
-
               except Exception as e:
                 traceback.print_exc()
                 responseData['responseErrorDetails'] = e
                 cfnresponse.send(event, context, cfnresponse.FAILED, responseData)
-
               responseData['RunConnector'] = r.status_code
               cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
-
       Description: Lambda Function to run AWS connector after creation of the IAM Role for the connector
       Handler: index.lambda_handler
       Role: !GetAtt 'LambdaExecutionRole.Arn'
