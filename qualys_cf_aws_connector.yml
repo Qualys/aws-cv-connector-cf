@@ -27,6 +27,7 @@ Parameters:
     Default: CF-QualysAWSConnectorRole
     Description: Name of the Role to Create
     Type: String
+
 Resources:
   ConnectorFunction:
     Type: AWS::Lambda::Function
@@ -47,17 +48,25 @@ Resources:
           import cfnresponse
           from random import randint
           import time
+          import boto3
 
           def lambda_handler(event,context):
               EXTERNALID = os.getenv('EXTERNALID')
               ROLENAME = os.getenv('ROLENAME')
-
               dataConnectorId = 12345678
               qualysAccountId = 805950163170
 
               try:
                 api_endpoint="{}/cloudview-api/rest/1.5/aws/connectors".format(os.getenv('BASEURL'))
                 ACCOUNT_ID = context.invoked_function_arn.split(":")[4]
+                client = boto3.client('iam')
+                paginator = client.get_paginator('list_account_aliases')
+                for response in paginator.paginate():
+                  print(response['AccountAliases'])
+                  print(type(response['AccountAliases'][0]))
+                  accountName = str(response['AccountAliases'][0])
+
+
                 EXTERNALID = randint(1000000000000000000,999999999999999999999999999999999) if EXTERNALID == "Empty" else EXTERNALID
                 print("API_ENDPOINT: {}".format(api_endpoint))
                 print("ACCOUNT_ID: {}".format(ACCOUNT_ID))
@@ -65,14 +74,14 @@ Resources:
 
                 data= {
                     "arn":"arn:aws:iam::{}:role/{}".format(ACCOUNT_ID, ROLENAME),
-                    "name":"CF_AWS_{}2".format(ACCOUNT_ID),
-                    "description": "Connector for AWS Account {} - Implemented with CloudFormation".format(ACCOUNT_ID),
+                    "name":"{}".format(accountName),
+                    "description": "Account Name: {0} AWS Account ID {1} - Implemented with CloudFormation".format(accountName, ACCOUNT_ID),
                     "externalId":"{}".format(EXTERNALID)
                   }
                 auth=(os.getenv('USERNAME'), os.getenv('PASSWORD'))
 
                 print("DATA: {}".format(data))
-                print("AUTH: {}".format(auth))
+                # print("AUTH: {}".format(auth))
 
                 headers = {"X-Requested-With": "Qualys CloudFormation (python)"}
                 headers['Accept'] = 'application/json'
@@ -147,6 +156,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - iam:CreateRole
+                  - iam:ListAccountAliases
                 Resource: '*'
   QualysConnectorRole:
     Type: AWS::IAM::Role
