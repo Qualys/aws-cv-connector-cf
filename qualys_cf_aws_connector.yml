@@ -57,7 +57,7 @@ Resources:
           import json
           import traceback
           import os
-          from botocore.vendored import requests
+          import urllib3
           import cfnresponse
           from random import randint
           import time
@@ -66,8 +66,8 @@ Resources:
           def lambda_handler(event,context):
               EXTERNALID = os.getenv('EXTERNALID')
               ROLENAME = os.getenv('ROLENAME')
-              dataConnectorId = 12345678
-              qualysAccountId = 805950163170
+              dataConnectorId = 1 #setting variable type - variable set for logging
+              qualysAccountId = 1 #setting variable type - account ID for trust relationship is set by create connector API response
               ASSETVIEWCONNECTOR = os.getenv('ASSETVIEWCONNECTOR')
 
               try:
@@ -88,39 +88,32 @@ Resources:
                 print("API_ENDPOINT: {}".format(api_endpoint))
                 print("ACCOUNT_ID: {}".format(ACCOUNT_ID))
                 print("EXTERNALID: {}".format(EXTERNALID))
-                if ASSETVIEWCONNECTOR:
-                  data= {
-                      "arn":"arn:aws:iam::{}:role/{}".format(ACCOUNT_ID, ROLENAME),
-                      "name":"{}".format(accountName),
-                      "description": "Account Name: {0} AWS Account ID {1} - Implemented with CloudFormation".format(accountName, ACCOUNT_ID),
-                      "externalId":"{}".format(EXTERNALID),
-                      "isPortalConnector":"{}".format(ASSETVIEWCONNECTOR)
+                data= {
+                    "arn":"arn:aws:iam::{}:role/{}".format(ACCOUNT_ID, ROLENAME),
+                    "name":"{}".format(accountName),
+                    "description": "Account Name: {0} AWS Account ID {1} - Implemented with CloudFormation".format(accountName, ACCOUNT_ID),
+                    "externalId":"{}".format(EXTERNALID),
+                    "isPortalConnector":"{}".format(ASSETVIEWCONNECTOR)
                     }
-                else:
-                  data= {
-                      "arn":"arn:aws:iam::{}:role/{}".format(ACCOUNT_ID, ROLENAME),
-                      "name":"{}".format(accountName),
-                      "description": "Account Name: {0} AWS Account ID {1} - Implemented with CloudFormation".format(accountName, ACCOUNT_ID),
-                      "externalId":"{}".format(EXTERNALID)
-                    }
-                auth=(os.getenv('USERNAME'), os.getenv('PASSWORD'))
 
+                auth=os.getenv('USERNAME')+":"+os.getenv('PASSWORD')
+                headers = urllib3.make_headers(basic_auth=auth)
                 print("DATA: {}".format(data))
                 # print("AUTH: {}".format(auth))
-
-                headers = {"X-Requested-With": "Qualys CloudFormation (python)"}
+                encoded_data = json.dumps(data).encode('utf-8')
+                headers['X-Requested-With'] = 'Qualys CloudFormation (python)'
                 headers['Accept'] = 'application/json'
                 headers['Content-Type'] = 'application/json'
-
-                r = requests.post(api_endpoint, json=data, auth=auth, headers=headers)
-                print("RESPONSE: {}".format(r))
-                data = r.json()
-                print("DATA: {}".format(data))
+                http = urllib3.PoolManager()
+                #r = requests.post(api_endpoint, json=data, auth=auth, headers=headers)
+                r = http.request('POST', api_endpoint, body=encoded_data, headers=headers, timeout=180)
+                print("Status: {}".format(r.status))
+                data = json.loads(r.data.decode('utf-8'))
 
 
                 responseData = {}
-                if r.status_code == 200 or r.status_code == 201:
-                  responseData['responseCode'] = r.status_code
+                if r.status == 200 or r.status == 201:
+                  responseData['responseCode'] = r.status
 
                   if 'error' in data:
                     if data['error']:
@@ -129,11 +122,9 @@ Resources:
 
 
                   if 'connectorId' in data:
-                    DataConnectorId = data['connectorId']
+                    dataConnectorId = data['connectorId']
                     if 'qualysAccountId' in data:
-                      # qualysAccountId = data['qualysAccountId']
-                      # Hard code of Qualys Account ID
-                      qualysAccountId = 805950163170
+                      qualysAccountId = data['qualysAccountId']
                     print("ResponseData collection: {}".format(responseData))
                     callconnectorId = data['connectorId']
 
@@ -142,10 +133,11 @@ Resources:
               except Exception as e:
                 responseData = {}
                 traceback.print_exc()
+                print("Response - {}".format(e))
                 responseData['responseErrorDetails'] = e
                 cfnresponse.send(event, context, cfnresponse.FAILED, responseData)
 
-              responseData['DataConnectorId'] = DataConnectorId
+              responseData['DataConnectorId'] = dataConnectorId
               responseData['AccountId'] = qualysAccountId
               responseData['ExternalId'] = EXTERNALID
               cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
@@ -154,7 +146,7 @@ Resources:
       Handler: index.lambda_handler
       Role: !GetAtt 'LambdaExecutionRole.Arn'
       Runtime: python3.6
-      Timeout: '30'
+      Timeout: '300'
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -214,64 +206,75 @@ Resources:
           USERNAME: !Ref UserName
           PASSWORD: !Ref Password
           CONNECTORID: !GetAtt 'CustomResource.DataConnectorId'
+          ASSETVIEWCONNECTOR: !Ref AssetViewConnector
 
       Code:
         ZipFile: !Sub |
           import json
           import traceback
           import os
-          from botocore.vendored import requests
+          import urllib3
           import cfnresponse
 
 
           def lambda_handler(event,context):
               CONNECTORID = os.getenv('CONNECTORID')
               PORTALBASEURL = os.getenv('PORTALBASEURL')
+              ASSETVIEWCONNECTOR = os.getenv('ASSETVIEWCONNECTOR')
               responseData = {}
 
               try:
                 api_endpoint="{}/cloudview-api/rest/v1/aws/connectors/run".format(os.getenv('BASEURL'))
+                data = []
                 api_endpoint_av_query="{}/qps/rest/2.0/search/am/awsassetdataconnector/".format(PORTALBASEURL)
                 api_endpoint_run_av="{}/qps/rest/2.0/run/am/awsassetdataconnector/".format(PORTALBASEURL)
-                data = {"awsIds":[CONNECTORID]}
+                data.append(CONNECTORID)
+                encoded_data = json.dumps(data).encode('utf-8')
                 ACCOUNT_ID = context.invoked_function_arn.split(":")[4]
-                data2 = "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><ServiceRequest><filters><Criteria field=\"awsAccountId\" operator=\"EQUALS\">{0}</Criteria></filters></ServiceRequest>".format(str(ACCOUNT_ID))
-                auth=(os.getenv('USERNAME'), os.getenv('PASSWORD'))
+                data2 = '<?xml version="1.0" encoding="UTF-8" ?><ServiceRequest><filters><Criteria field="awsAccountId" operator="EQUALS">{0}</Criteria></filters></ServiceRequest>'.format(str(ACCOUNT_ID))
+                auth=os.getenv('USERNAME')+":"+os.getenv('PASSWORD')
+                headers = urllib3.make_headers(basic_auth=auth)
                 print("DATA: {}".format(data))
                 print("URL for run request {}".format(api_endpoint))
 
-                headers = {"X-Requested-With": "Qualys CloudFormation (python)"}
+                headers['X-Requested-With'] = "Qualys CloudFormation (python)"
                 headers['Accept'] = 'application/json'
                 headers['Content-Type'] = 'application/json'
-                avheaders = {"X-Requested-With": "Qualys CloudFiormation", "Accept": "application/json", "Content-Type":"text/xml"}
+                avheaders = headers.copy()
+                avheaders['Content-Type'] = "text/xml"
                 print("DATA: {}".format(data))
-
-                r = requests.post(api_endpoint, json=data, auth=auth, headers=headers)
-                print("Run Connector Response: {}".format(r.status_code))
-                r2 = requests.post(api_endpoint_av_query, data=data2, auth=auth, headers=avheaders)
-                print("Query Connector Response: {}".format(r2.status_code))
-                data2 = r2.json()
-                print("DATA: {}".format(data2))
-                if data2['ServiceResponse']['count'] > 0:
-                  # print("AssetView Connectors : {}".format(data2['ServiceResponse']['data']))
-                  for connector in data2['ServiceResponse']['data']:
-                    run_connector_url = api_endpoint_run_av + str(connector['AwsAssetDataConnector']['id'])
-                    r3 = requests.post(run_connector_url, auth=auth, headers=avheaders)
-                    print("Run Connector ID: {}".format(str(connector['AwsAssetDataConnector']['id'])))
+                http = urllib3.PoolManager()
+                r = http.request('POST', api_endpoint, body=encoded_data, headers=headers, timeout=180)
+                print("Run Connector Response Status: {}".format(r.status))
+                if ASSETVIEWCONNECTOR:
+                  #print("AV Query URL {}".format(api_endpoint_av_query))
+                  #print("AV Query Body {}".format(encoded_data2))
+                  #print("AV Query Headers \n {}".format(avheaders))
+                  r2 = http.request('POST', api_endpoint_av_query, body=data2, headers=avheaders, timeout=180)
+                  print("Status: {}".format(r2.status))
+                  data2 = json.loads(r2.data.decode('utf-8'))
+                  print("DATA: {}".format(data2))
+                  if data2['ServiceResponse']['count'] > 0:
+                    for connector in data2['ServiceResponse']['data']:
+                      run_connector_url = api_endpoint_run_av + str(connector['AwsAssetDataConnector']['id'])
+                      r3 = http.request('POST', run_connector_url, headers=avheaders, timeout=180)
+                      print("Run Connector ID: {} status code {}".format(str(connector['AwsAssetDataConnector']['id']),r3.status))
 
               except Exception as e:
                 traceback.print_exc()
+                print("Response - {}".format(e))
+                responseData['Error Reponse'] = {"r": r.status, "r2": r2.status, "r3": r3.status }
                 responseData['responseErrorDetails'] = e
                 cfnresponse.send(event, context, cfnresponse.FAILED, responseData)
 
-              responseData['RunConnector'] = r.status_code
+              responseData['RunConnector'] = r.status
               cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
 
       Description: Lambda Function to run AWS connector after creation of the IAM Role for the connector
       Handler: index.lambda_handler
       Role: !GetAtt 'LambdaExecutionRole.Arn'
       Runtime: python3.6
-      Timeout: '30'
+      Timeout: '600'
 
   CustomResource:
     Type: Custom::CustomResource
